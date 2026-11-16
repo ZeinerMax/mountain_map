@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>mountain_map</title>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+
+  <div id="banner" hidden></div>
+
+  <aside id="panel">
+    <button id="panelToggle" aria-label="Toggle panel">☰</button>
+    <div id="panelBody">
+      <h1>mountain_map</h1>
+
+      <section>
+        <h2>Layers</h2>
+        <label><input type="checkbox" id="ovToggle" checked /> Tracestrack Topo overlay</label>
+        <label>Opacity <input type="range" id="ovOpacity" min="0" max="1" step="0.05" value="0.85" /></label>
+        <label><input type="checkbox" id="baseToggle" checked /> Satellite base (MapTiler)</label>
+      </section>
+
+      <section>
+        <h2>Routes</h2>
+        <div class="row">
+          <button id="btnDraw">Draw</button>
+          <button id="btnFinish" disabled>Finish</button>
+          <button id="btnEdit" disabled>Edit</button>
+          <button id="btnDelete" disabled>Delete</button>
+        </div>
+        <div class="row">
+          <button id="btnImport">Import GPX</button>
+          <button id="btnExport" disabled>Export GPX</button>
+          <input type="file" id="gpxFile" accept=".gpx,application/gpx+xml,text/xml" hidden />
+        </div>
+        <p class="hint" id="routeHint">Draw: click to add points, double-click or Finish to end. Edit: drag points, right-click a point to delete it, Shift+click to insert.</p>
+        <ul id="routeList"></ul>
+        <div id="routeStats"></div>
+      </section>
+
+      <section>
+        <h2>Huts &amp; bivouacs</h2>
+        <div class="row">
+          <input type="search" id="hutFilter" placeholder="Filter by name…" />
+          <button id="btnHuts">Search view</button>
+        </div>
+        <p class="hint" id="hutStatus"></p>
+        <ul id="hutList"></ul>
+      </section>
+    </div>
+  </aside>
+
+  <div id="compass" title="Click to reset north">
+    <svg viewBox="-50 -50 100 100" id="compassSvg">
+      <circle r="46" class="ring" />
+      <g id="needle"><polygon points="0,-40 7,0 -7,0" class="n" /><polygon points="0,40 7,0 -7,0" class="s" /><text y="-26" class="lbl">N</text></g>
+    </svg>
+    <div id="compassText">0° · pitch -90°</div>
+    <div class="row">
+      <button id="tiltUp" title="Tilt up (towards horizon)">⤒</button>
+      <button id="tiltDown" title="Tilt down (towards top view)">⤓</button>
+    </div>
+  </div>
+
+  <div id="hutDetails" hidden></div>
+
+  <div id="profile" hidden>
+    <canvas id="profileCanvas"></canvas>
+    <div id="profileInfo"></div>
+  </div>
+
+  <div id="infobar">
+    <span id="ibCoord">–</span>
+    <span id="ibEle">elev –</span>
+    <span id="ibSlope">slope –</span>
+    <span id="ibScale"><i id="scaleBar"></i> <b id="scaleLabel"></b></span>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
