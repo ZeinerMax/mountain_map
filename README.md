@@ -1,5 +1,7 @@
 # mountain_map
 
+**Live:** https://mountain-map.vercel.app · **Repo:** https://github.com/ZeinerMax/mountain_map
+
 3D hiking/mountaineering map: MapTiler Terrain 3D (Cesium quantized mesh) + Tracestrack Topo overlay (OSM-based, tourist paths).
 
 ## Run
@@ -54,3 +56,33 @@ Verified by running: MapTiler terrain+satellite and Tracestrack tile requests re
 5. Self-host/alternate Overpass for production.
 
 Notes for resuming: `obsidian/`, `CLAUDE.md`.
+
+## Development log (all on 2026-11-16)
+
+### How it was built
+1. **Plan and scaffold.** One autonomous Claude Code run produced the Vite + TypeScript + CesiumJS project and all six feature areas (terrain + overlay, routes, GPX, hut search, compass, info bar). The terminal was then closed by accident, so the work was resumed in a new session by reading the files left on disk.
+2. **Review and build check.** `npm run build` passed, but the output was wrong (see problem 1). Dev server was started and its static files requested to confirm they are served.
+3. **Documentation.** README, `CLAUDE.md` and Obsidian notes in `obsidian/` were written so a later session can resume without re-analysis.
+4. **Keys and live check.** MapTiler and Tracestrack keys were added to `.env` and tested with real requests (see problems 2-4).
+5. **Publish.** Committed and pushed to GitHub, then deployed to Vercel with the keys set as production environment variables.
+
+### What was difficult and how it was solved
+| # | Problem | How it was found | Fix |
+|---|---|---|---|
+| 1 | Production build copied Cesium workers/assets to `dist/cesium/node_modules/cesium/Build/Cesium/...`, so the built app could not find them. | Listing `dist/` after the first build. | `rename: { stripBase: 4 }` in `vite.config.ts`, now `dist/cesium/Workers` etc. |
+| 2 | MapTiler key in `.env.example` was actually the full terrain URL (`.../tiles.json?key=...`), and sat in the template that gets committed. API answered 403 "Invalid key". | Key length (92) did not match a real key; masked-pattern check of the value. | Moved to git-ignored `.env`, kept only the part after `key=`, blanked `.env.example`. Terrain and satellite then returned 200. |
+| 3 | Imagery layers had no tiling scheme. Cesium's `UrlTemplateImageryProvider` defaults to a geographic scheme, but MapTiler/Tracestrack tiles are Web Mercator, so they would be misplaced. | Code review while testing the tile URLs. | `tilingScheme: new Cesium.WebMercatorTilingScheme()` on both layers. |
+| 4 | Tracestrack tile size and style name were only assumed (docs site was not reachable). | Real tile request with the key. | Confirmed `topo__` URL returns 512 px PNG tiles in XYZ numbering; set `tileWidth/Height: 512`. Max zoom 19 and licence terms are still unverified. |
+| 5 | Public Overpass server answered 502 "at capacity" (and 406 to a bare curl). | Test query. | Not a code bug: the app shows an error message and the user can retry; endpoint is configurable via `VITE_OVERPASS_URL`. |
+| 6 | Vercel `env add` for `VITE_*` names refused interactive use and warned the value is public. | CLI output. | Added with `--type config --value ...`. Keys in a client-only app are public by design, so they must be restricted by origin in the provider consoles. |
+
+### Key decisions
+- CesiumJS + Vite, no UI framework: native quantized-mesh terrain and imagery layers, light bundler.
+- Keys only through `VITE_*` env vars; `.env` is git-ignored; `.env.example` stays blank.
+- Overlay is Tracestrack (needs its own key); OSM data for huts comes from Overpass (no key).
+- Routes stored in browser `localStorage` (no backend).
+
+### Deployment
+- GitHub: `main` pushed 2026-11-16 (commit `2e5c4c4`).
+- Vercel: `vercel deploy --prod` from the project folder, project `mountain-map`, alias https://mountain-map.vercel.app. The repo is not connected to Vercel, so pushes do not auto-deploy.
+- TODO: restrict both API keys to the Vercel domain and `localhost`; enable 2FA on the Vercel account.
