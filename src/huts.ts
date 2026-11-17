@@ -1,5 +1,5 @@
 import * as Cesium from 'cesium';
-import { OVERPASS_URL } from './config';
+import { overpass } from './overpass';
 
 /*
  * Hut / bivouac search via the Overpass API (OpenStreetMap data, ODbL: attribution required).
@@ -9,7 +9,7 @@ import { OVERPASS_URL } from './config';
  * Tag choice is an ASSUMPTION based on common OSM usage: tourism=alpine_hut, tourism=wilderness_hut, amenity=shelter.
  */
 export interface Hut {
-  id: string; name: string; kind: 'alpine_hut' | 'wilderness_hut' | 'shelter';
+  id: string; name: string; kind: 'alpine_hut' | 'wilderness_hut' | 'shelter' | 'peak';
   lat: number; lon: number; tags: Record<string, string>;
 }
 
@@ -17,8 +17,9 @@ const KIND_LABEL: Record<Hut['kind'], string> = {
   alpine_hut: 'Alpine hut (staffed/serviced)',
   wilderness_hut: 'Wilderness hut / bivouac',
   shelter: 'Shelter',
+  peak: 'Peak',
 };
-const KIND_COLOR: Record<Hut['kind'], string> = { alpine_hut: '#d81b60', wilderness_hut: '#8e24aa', shelter: '#00897b' };
+const KIND_COLOR: Record<Hut['kind'], string> = { alpine_hut: '#d81b60', wilderness_hut: '#8e24aa', shelter: '#00897b', peak: '#6d4c41' };
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -65,13 +66,7 @@ export class HutSearch {
     status.textContent = 'Searching OpenStreetMap…';
     ($('btnHuts') as HTMLButtonElement).disabled = true;
     try {
-      const res = await fetch(OVERPASS_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: 'data=' + encodeURIComponent(q),
-      });
-      if (!res.ok) throw new Error(`Overpass HTTP ${res.status}${res.status === 429 ? ' (rate limited, retry later)' : ''}`);
-      const json = (await res.json()) as { elements: any[] };
+      const json = await overpass(q);
       this.huts = json.elements
         .map((el): Hut | undefined => {
           const lat = el.lat ?? el.center?.lat, lon = el.lon ?? el.center?.lon;
@@ -123,6 +118,15 @@ export class HutSearch {
       li.append(name, k);
       list.append(li);
     }
+  }
+
+  /** Show a hut/peak found by the global search: marker, details panel and fly-to. */
+  show(h: Hut, fly = true) {
+    const i = this.huts.findIndex((x) => x.id === h.id);
+    if (i >= 0) this.huts[i] = h; else this.huts.push(h);
+    this.render();
+    this.showDetails(h.id);
+    if (fly) this.flyTo(h);
   }
 
   private flyTo(h: Hut) {

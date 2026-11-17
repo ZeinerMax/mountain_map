@@ -37,6 +37,17 @@ li.sel { background: var(--accent-fill); }
 li button { padding: 0 6px; }
 #routeStats { margin-top: 6px; }
 
+#search { position: fixed; z-index: 20; top: 12px; left: 50%; transform: translateX(-50%); width: min(460px, calc(100% - 600px)); min-width: 260px; }
+#searchInput { width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--fg); font: inherit; font-size: 14px; backdrop-filter: blur(8px); box-shadow: 0 2px 8px #0003; }
+#searchStatus { margin-top: 4px; padding: 5px 10px; font-size: 12px; color: var(--fg2); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; }
+#suggest { margin: 4px 0 0; padding: 4px; max-height: 60vh; overflow-y: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; backdrop-filter: blur(8px); box-shadow: 0 4px 14px #0004; display: block; }
+#suggest[hidden], #searchStatus[hidden] { display: none; }
+#suggest li.grp { display: block; padding: 6px 8px 2px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--fg2); cursor: default; }
+#suggest li.item { cursor: pointer; padding: 6px 8px; align-items: baseline; }
+#suggest li.item.active, #suggest li.item:hover { background: var(--accent-fill); }
+#suggest li.item b { font-weight: 600; }
+#suggest li.item small { flex: 1; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 #compass { position: fixed; z-index: 10; top: 12px; right: 12px; width: 108px; padding: 8px; text-align: center; background: var(--bg); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; backdrop-filter: blur(8px); }
 #compass svg { width: 80px; height: 80px; }
 #compass .ring { fill: none; stroke: var(--fg2); stroke-width: 2; }
@@ -65,7 +76,10 @@ a { color: var(--accent); }
 /* Cesium credit bar stays visible (attribution requirement) */
 .cesium-viewer-bottom { z-index: 11; }
 
+@media (max-width: 1000px) { #search { left: 344px; right: 132px; width: auto; min-width: 0; transform: none; } }
 @media (max-width: 700px) {
+  #search { left: 12px; right: 12px; width: auto; }
+  #panel { top: 62px; max-height: calc(55% - 50px); }
   #panel { width: calc(100% - 24px); max-height: 55%; }
   #panelToggle { display: block; }
   #panel.collapsed { width: 44px; height: 38px; }

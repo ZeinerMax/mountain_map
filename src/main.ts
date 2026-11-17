@@ -3,6 +3,7 @@ import './style.css';
 import { createMap } from './map';
 import { RouteManager } from './routes';
 import { HutSearch } from './huts';
+import { initSearch } from './search';
 import { initCompass, initInfoBar } from './hud';
 import { MAPTILER_KEY, TRACESTRACK_KEY } from './config';
 
@@ -26,8 +27,9 @@ ovToggle.onchange = () => { if (ctx.overlay) ctx.overlay.show = ovToggle.checked
 ovOpacity.oninput = () => { if (ctx.overlay) ctx.overlay.alpha = parseFloat(ovOpacity.value); };
 baseToggle.onchange = () => { if (ctx.base) ctx.base.show = baseToggle.checked; };
 
-new RouteManager(ctx);
-new HutSearch(ctx.viewer);
+const routes = new RouteManager(ctx);
+const huts = new HutSearch(ctx.viewer);
+initSearch(huts, routes);
 initCompass(ctx.viewer);
 initInfoBar(ctx.viewer);
 

@@ -238,6 +238,14 @@ export class RouteManager {
     this.renderStats(undefined);
     this.renderAll();
   }
+  /** Add a route obtained elsewhere (e.g. the global search), select it and fly to it. */
+  addRoute(name: string, points: Pt[]) {
+    const r: Route = { id: uid(), name, points };
+    this.routes.push(r);
+    this.save();
+    this.select(r.id);
+    this.zoomTo(r);
+  }
   select(id: string) {
     this.selectedId = id;
     if (this.mode === 'draw') this.mode = 'idle';

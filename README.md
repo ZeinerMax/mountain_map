@@ -26,7 +26,9 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 | `routes.ts` | draw/edit/delete routes, stats, GPX import/export UI, localStorage |
 | `profile.ts` | elevation profile canvas with hover marker |
 | `geo.ts`, `gpx.ts` | haversine/ascent/descent, GPX parse/build |
-| `huts.ts` | Overpass hut/bivouac search, markers, details panel |
+| `huts.ts` | view-based Overpass hut/bivouac search, markers, details panel (also shows peaks/huts picked in the global search) |
+| `search.ts` | global search bar with suggestions: peaks/huts/bivouacs (Photon) + routes (Waymarked Trails), route geometry via Overpass |
+| `overpass.ts` | shared Overpass client with fallback servers |
 | `hud.ts` | compass + tilt, cursor coords/elevation/slope, scale bar |
 
 ## Data sources & status of verification
@@ -42,7 +44,8 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 | 3D terrain + Topo overlay, opacity, toggle | implemented; **not tested with real keys** |
 | Route draw/edit/delete, distance, ascent/descent, profile | implemented; untested in browser |
 | GPX import/export, localStorage | implemented; untested in browser |
-| Hut search + markers + details | implemented; untested against live Overpass |
+| Hut search + markers + details (current view) | implemented; untested against live Overpass |
+| Global search bar with suggestions (peaks, huts, bivouacs, routes, whole world) | implemented 2026-11-17; APIs tested with curl, UI not yet seen in a browser; not deployed |
 | Compass, pitch/tilt | implemented; untested |
 | Cursor coords/elevation/slope, scale | implemented; untested |
 
@@ -86,3 +89,12 @@ Notes for resuming: `obsidian/`, `CLAUDE.md`.
 - GitHub: `main` pushed 2026-11-16 (commit `2e5c4c4`).
 - Vercel: `vercel deploy --prod` from the project folder, project `mountain-map`, alias https://mountain-map.vercel.app. The repo is not connected to Vercel, so pushes do not auto-deploy.
 - TODO: restrict both API keys to the Vercel domain and `localhost`; enable 2FA on the Vercel account.
+
+### 2026-11-17: global search bar
+- **Goal:** search peaks, huts, bivouacs and routes across the whole world (not just the view), with suggestions while typing.
+- **Sources (no keys):** Photon `photon.komoot.io` with `osm_tag` filters (natural:peak, tourism:alpine_hut, tourism:wilderness_hut, amenity:shelter) - verified by request; Waymarked Trails `hiking.waymarkedtrails.org/api/v1/list/search` for routes - verified by request, CORS open. Nominatim rejected: its policy forbids autocomplete. MapTiler geocoding also works with the existing key (not used; returns places/landforms, weaker for huts).
+- **Difficult part - route geometry:** Waymarked Trails finds routes but has no simple geometry endpoint (`/geometry/geojson` returns 404). Solved with an Overpass query for the relation and its sub-relations (`rel(ID)->.a;rel(r.a)->.b;(way(r.a);way(r.b););out geom;`), then chaining the ways greedily into one line (`chainWays` in `search.ts`).
+- **Difficult part - Overpass reliability:** the public server returned 502/504 and two fallback servers did not answer. `overpass.ts` tries the configured server, then `maps.mail.ru` (answered 200), then `private.coffee`.
+- **Measured:** Walker's Haute Route (997 ways, 26,000 points) took ~35 s and 1.9 MB from Overpass. Long routes are slow to load.
+- **Known limitation:** routes with alternative variants are chained into one line, so length can exceed the official one (this route: 292 km vs 209 km, with one 25 km straight jump between branches). A proper fix would draw each way as its own segment.
+- **Untested:** typing/dropdown/keyboard behaviour and layout in a browser; Photon fair-use terms not read in full.
