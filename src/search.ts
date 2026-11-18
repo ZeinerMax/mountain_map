@@ -2,7 +2,10 @@ import type { HutSearch, Hut } from './huts';
 import type { RouteManager } from './routes';
 import { overpass } from './overpass';
 import { haversine, type Pt } from './geo';
-import { loadIndex, searchIndex, indexReady } from './poi';
+import * as Cesium from 'cesium';
+import { loadIndex, searchIndex, indexReady, fold } from './poi';
+import { parseCoords, formatCoords, type LatLon } from './coords';
+import { flyToPlace, terrainHeight } from './map';
 
 /*
  * Global search with suggestions.
@@ -16,10 +19,11 @@ const WMT_URL = 'https://hiking.waymarkedtrails.org/api/v1/list/search';
 
 type Kind = Hut['kind'];
 interface Suggestion {
-  group: 'Peaks' | 'Huts & bivouacs' | 'Routes';
+  group: 'Coordinates' | 'Peaks' | 'Huts & bivouacs' | 'Routes';
   title: string; sub: string;
   hut?: Hut;
   routeRelId?: number;
+  coords?: LatLon;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -28,8 +32,15 @@ async function wmt(q: string, signal: AbortSignal): Promise<Suggestion[]> {
   const res = await fetch(`${WMT_URL}?query=${encodeURIComponent(q)}&limit=6`, { signal });
   if (!res.ok) throw new Error(`Waymarked Trails HTTP ${res.status}`);
   const json = (await res.json()) as { results: any[] };
+  // Waymarked Trails matches loosely ("Grossglockner" -> "Gross - Gross"): keep only routes where every query word
+  // appears in the name, ref or itinerary.
+  const words = fold(q).split(/\s+/).filter((w) => w.length >= 2);
+  const relevant = (r: any) => {
+    const hay = fold([r.name, r.ref, ...(Array.isArray(r.itinerary) ? r.itinerary : [])].filter(Boolean).join(' '));
+    return words.every((w) => hay.includes(w));
+  };
   return json.results
-    .filter((r) => r.type === 'relation' && r.name)
+    .filter((r) => r.type === 'relation' && r.name && relevant(r))
     .map((r): Suggestion => ({
       group: 'Routes', title: r.ref && !r.name.includes(r.ref) ? `${r.name} (${r.ref})` : r.name,
       sub: Array.isArray(r.itinerary) ? r.itinerary.join(' → ') : '', routeRelId: r.id,
@@ -88,15 +99,24 @@ async function fetchRouteGeometry(relId: number): Promise<Pt[]> {
   return joinInOrder(ways);
 }
 
-export function initSearch(huts: HutSearch, routes: RouteManager) {
+export function initSearch(huts: HutSearch, routes: RouteManager, viewer: Cesium.Viewer) {
   const input = $<HTMLInputElement>('searchInput'), list = $('suggest'), status = $('searchStatus');
   let items: Suggestion[] = [];
   let active = -1;
   let ctl: AbortController | undefined;
   let timer: number | undefined;
   let seq = 0;
+  let pin: Cesium.Entity | undefined;
+  const ORDER = ['Coordinates', 'Peaks', 'Huts & bivouacs', 'Routes'];
 
   const setStatus = (t: string) => { status.textContent = t; status.hidden = !t; };
+
+  // Speed: fetch and parse the local index in the background right after start-up, not on the first keystroke.
+  const preload = () => { void loadIndex().catch(() => { /* retried on first search */ }); };
+  const idle = (window as unknown as { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number }).requestIdleCallback;
+  if (idle) idle.call(window, preload, { timeout: 4000 });
+  else window.setTimeout(preload, 1500);
+  input.addEventListener('focus', preload, { once: true });
 
   function render() {
     list.innerHTML = '';
@@ -120,42 +140,52 @@ export function initSearch(huts: HutSearch, routes: RouteManager) {
     list.hidden = items.length === 0;
   }
 
-  const ORDER = ['Peaks', 'Huts & bivouacs', 'Routes'];
-
-  function localSuggestions(q: string): Suggestion[] {
-    return searchIndex(q, 6).map((h): Suggestion => ({
+  const localSuggestions = (q: string): Suggestion[] =>
+    searchIndex(q, 6).map((h): Suggestion => ({
       group: h.peak ? 'Peaks' : 'Huts & bivouacs', title: h.hut.name, sub: h.sub, hut: h.hut,
     }));
-  }
-  function show(local: Suggestion[], remote: Suggestion[]) {
-    items = [...local, ...remote].sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));
+
+  function show(parts: Suggestion[]) {
+    items = parts.sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));
     active = items.length ? 0 : -1;
     render();
   }
 
-  async function run(q: string) {
+  /** Synchronous part: coordinates and local index. Runs on every keystroke with no debounce. */
+  function instant(q: string): { local: Suggestion[]; isCoords: boolean } {
+    const c = parseCoords(q);
+    if (c) {
+      show([{ group: 'Coordinates', title: formatCoords(c), sub: 'Go to this place', coords: c }]);
+      setStatus('');
+      return { local: [], isCoords: true };
+    }
+    const local = indexReady() ? localSuggestions(q) : [];
+    show(local);
+    return { local, isCoords: false };
+  }
+
+  /** Asynchronous part: wait for the index if needed, then fetch routes (debounced by the caller). */
+  async function slow(q: string, local: Suggestion[]) {
     ctl?.abort();
     ctl = new AbortController();
     const my = ++seq, sig = ctl.signal;
-    const timeout = window.setTimeout(() => ctl?.abort(), 6000); // never let a slow server stall the dropdown
-    let local: Suggestion[] = [];
+    const timeout = window.setTimeout(() => ctl?.abort(), 6000); // a slow server must not stall the dropdown
     let failed = '';
-    // 1) local index: instant once loaded
-    try {
-      if (!indexReady()) setStatus('Loading local index…');
-      await loadIndex();
-      if (my !== seq) { clearTimeout(timeout); return; }
-      local = localSuggestions(q);
-      show(local, []);
-      setStatus(local.length ? 'Searching routes…' : 'Searching routes…');
-    } catch (e) { failed = `local index (${(e as Error).message})`; setStatus('Searching routes…'); }
-    // 2) routes: arrive later, merged into the same list
+    if (!indexReady()) {
+      setStatus('Loading local index…');
+      try {
+        await loadIndex();
+        if (my !== seq) { clearTimeout(timeout); return; }
+        local = localSuggestions(q);
+        show(local);
+      } catch (e) { failed = `local index (${(e as Error).message})`; }
+    }
+    setStatus('Searching routes…');
     let remote: Suggestion[] = [];
-    try { remote = await wmt(q, sig); }
-    catch (e) { if ((e as Error).name !== 'AbortError' || !sig.aborted || my === seq) failed ||= 'routes'; }
+    try { remote = await wmt(q, sig); } catch { failed ||= 'routes'; }
     clearTimeout(timeout);
     if (my !== seq) return;
-    show(local, remote);
+    show([...local, ...remote]);
     setStatus(
       items.length
         ? (failed ? `Source unavailable: ${failed}` : '')
@@ -163,11 +193,32 @@ export function initSearch(huts: HutSearch, routes: RouteManager) {
     );
   }
 
+  /** Marker with coordinates and terrain elevation at a searched position. Returns the terrain height. */
+  async function dropPin(c: LatLon): Promise<number> {
+    const h = await terrainHeight(viewer, c.lon, c.lat);
+    if (pin) viewer.entities.remove(pin);
+    pin = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(c.lon, c.lat, h),
+      point: { pixelSize: 12, color: Cesium.Color.fromCssColorString('#00e5ff'), outlineColor: Cesium.Color.BLACK, outlineWidth: 2, disableDepthTestDistance: Number.POSITIVE_INFINITY },
+      label: {
+        text: `${formatCoords(c)}\n${Math.round(h)} m`, font: '13px system-ui', fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+        style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -34), disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+    });
+    return h;
+  }
+
   async function choose(s: Suggestion) {
+    // Cancel any pending/in-flight route search so it cannot re-open the dropdown afterwards.
+    clearTimeout(timer); ctl?.abort(); seq++;
     list.hidden = true;
-    input.value = s.title;
+    input.value = s.coords ? formatCoords(s.coords) : s.title;
     input.blur();
-    if (s.hut) {
+    if (s.coords) {
+      setStatus('');
+      const h = await dropPin(s.coords);
+      void flyToPlace(viewer, s.coords.lon, s.coords.lat, undefined, h);
+    } else if (s.hut) {
       setStatus('');
       huts.show(s.hut);
       // Enrich the details panel with the full OSM tags (elevation, phone, ...). Best effort.
@@ -192,7 +243,9 @@ export function initSearch(huts: HutSearch, routes: RouteManager) {
     clearTimeout(timer);
     const q = input.value.trim();
     if (q.length < 2) { ctl?.abort(); seq++; items = []; render(); setStatus(''); return; }
-    timer = window.setTimeout(() => void run(q), 350);
+    const { local, isCoords } = instant(q);
+    if (isCoords) { ctl?.abort(); seq++; return; }
+    timer = window.setTimeout(() => void slow(q, local), 250); // only the network part is debounced
   });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -203,7 +256,12 @@ export function initSearch(huts: HutSearch, routes: RouteManager) {
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (items[active]) void choose(items[active]);
-      else if (input.value.trim().length >= 2) { clearTimeout(timer); void run(input.value.trim()); }
+      else if (input.value.trim().length >= 2) {
+        clearTimeout(timer);
+        const q = input.value.trim();
+        const { local } = instant(q);
+        void slow(q, local);
+      }
     } else if (e.key === 'Escape') { list.hidden = true; input.blur(); }
   });
   input.addEventListener('focus', () => { if (items.length) list.hidden = false; });

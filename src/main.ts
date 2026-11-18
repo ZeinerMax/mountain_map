@@ -29,7 +29,7 @@ baseToggle.onchange = () => { if (ctx.base) ctx.base.show = baseToggle.checked; 
 
 const routes = new RouteManager(ctx);
 const huts = new HutSearch(ctx.viewer);
-initSearch(huts, routes);
+initSearch(huts, routes, ctx.viewer);
 initCompass(ctx.viewer);
 initInfoBar(ctx.viewer);
 

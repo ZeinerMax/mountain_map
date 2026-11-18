@@ -71,3 +71,33 @@ export function pickGround(viewer: Cesium.Viewer, pos: Cesium.Cartesian2): Cesiu
   const ray = viewer.camera.getPickRay(pos);
   return ray ? viewer.scene.globe.pick(ray, viewer.scene) : undefined;
 }
+
+/** Camera distance used when jumping to a searched place. At the default 60 deg field of view this gives a
+ *  scale bar of roughly 20 m per 100 px (measured: 150 m gave ~10 m, so 250 m). Easy to change. */
+export const FLY_RANGE_M = 250;
+export const FLY_PITCH_DEG = -35;
+
+/** Terrain height (m) at a position, or 0 if terrain is unavailable. */
+export async function terrainHeight(viewer: Cesium.Viewer, lon: number, lat: number): Promise<number> {
+  const carto = Cesium.Cartographic.fromDegrees(lon, lat);
+  try {
+    if (!(viewer.terrainProvider instanceof Cesium.EllipsoidTerrainProvider)) {
+      const [r] = await Cesium.sampleTerrainMostDetailed(viewer.terrainProvider, [carto]);
+      if (Number.isFinite(r.height)) return r.height;
+    }
+  } catch { /* fall through */ }
+  return viewer.scene.globe.getHeight(carto) ?? 0;
+}
+
+/**
+ * Fly to a point and look at it from FLY_RANGE_M. The target is placed at the real terrain height; targeting the
+ * ellipsoid (height 0) put the camera underground at high peaks (e.g. Grossglockner, 3798 m).
+ */
+export async function flyToPlace(viewer: Cesium.Viewer, lon: number, lat: number, range = FLY_RANGE_M, ele?: number) {
+  const h = ele ?? (await terrainHeight(viewer, lon, lat));
+  const target = Cesium.Cartesian3.fromDegrees(lon, lat, h);
+  viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(target, 1), {
+    duration: 1.5,
+    offset: new Cesium.HeadingPitchRange(viewer.camera.heading, Cesium.Math.toRadians(FLY_PITCH_DEG), range),
+  });
+}

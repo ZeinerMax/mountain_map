@@ -13,3 +13,6 @@ Search bar added (`src/search.ts`): Photon for peaks/huts/bivouacs, Waymarked Tr
 
 ## 2026-11-18
 Local Alps index (`public/data/poi-alps.json`, 108k places) replaces Photon; route join fixed; browser-tested. Next: more regions via `scripts/build-index.mjs`, route variants, better ascent. See README 2026-11-18. [[Data-sources]]
+
+## 2026-11-18 later
+Coordinate search (`src/coords.ts`), terrain-aware fly-to (`flyToPlace`, 250 m), instant local results, index preloaded. Not yet committed/deployed at time of writing. See README. [[Data-sources]]

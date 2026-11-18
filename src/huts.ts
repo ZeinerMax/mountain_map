@@ -1,5 +1,6 @@
 import * as Cesium from 'cesium';
 import { overpass } from './overpass';
+import { flyToPlace } from './map';
 
 /*
  * Hut / bivouac search via the Overpass API (OpenStreetMap data, ODbL: attribution required).
@@ -130,9 +131,8 @@ export class HutSearch {
   }
 
   private flyTo(h: Hut) {
-    this.viewer.camera.flyToBoundingSphere(new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(h.lon, h.lat), 1), {
-      duration: 1.2, offset: new Cesium.HeadingPitchRange(this.viewer.camera.heading, Cesium.Math.toRadians(-35), 2500),
-    });
+    // Height comes from the terrain model (not the OSM ele tag) so the camera matches what is drawn.
+    void flyToPlace(this.viewer, h.lon, h.lat);
   }
 
   private showDetails(id: string) {
