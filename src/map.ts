@@ -28,6 +28,12 @@ export function createMap(): MapCtx {
       : undefined,
   });
   viewer.scene.globe.depthTestAgainstTerrain = true;
+  // Stable level of detail: Cesium refines tiles whenever the screen-space error exceeds this value (default 2), so
+  // the map keeps re-sharpening while you move. A higher value switches detail levels only after larger zoom steps.
+  // A bigger tile cache (default 100) stops tiles from being evicted and reloaded when panning back and forth.
+  viewer.scene.globe.tileCacheSize = 1000;
+  viewer.scene.globe.preloadSiblings = false;
+  setDetail(viewer, loadDetail());
   viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#2b3340');
 
   const ctx: MapCtx = { viewer, hasTerrain };
@@ -100,4 +106,21 @@ export async function flyToPlace(viewer: Cesium.Viewer, lon: number, lat: number
     duration: 1.5,
     offset: new Cesium.HeadingPitchRange(viewer.camera.heading, Cesium.Math.toRadians(FLY_PITCH_DEG), range),
   });
+}
+
+/** Map detail presets: value = Cesium globe.maximumScreenSpaceError (higher = coarser, fewer re-renders while moving). */
+export const DETAIL_LEVELS = { low: 8, medium: 4, high: 2 } as const;
+export type DetailLevel = keyof typeof DETAIL_LEVELS;
+const DETAIL_KEY = 'mountain_map.detail.v1';
+
+export function loadDetail(): DetailLevel {
+  try {
+    const v = localStorage.getItem(DETAIL_KEY);
+    if (v === 'low' || v === 'medium' || v === 'high') return v;
+  } catch { /* storage unavailable */ }
+  return 'medium';
+}
+export function setDetail(viewer: Cesium.Viewer, level: DetailLevel) {
+  viewer.scene.globe.maximumScreenSpaceError = DETAIL_LEVELS[level];
+  try { localStorage.setItem(DETAIL_KEY, level); } catch { /* ignore */ }
 }

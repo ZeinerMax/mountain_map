@@ -116,3 +116,9 @@ Notes for resuming: `obsidian/`, `CLAUDE.md`.
 - **Speed:** the index loads in the background at start-up (idle), local results and coordinates are computed on every keystroke without debounce (measured 200-330 ms from typing to suggestions in the headless test, including browser overhead); only the route lookup is debounced (250 ms). Route loading itself (75-105 s for long routes) is still limited by the public Overpass servers.
 - **Fixes found by testing:** a pending route search could re-open the dropdown after choosing a result (now cancelled); Waymarked Trails returned loose fuzzy matches such as "Gross - Gross" for "Grossglockner" (now only routes containing all query words are shown).
 - **Not tested:** feel of the 250 m distance on real hardware, other coordinate styles (e.g. "47 02 19 N"), route loading on the live site while Overpass was down.
+
+### 2026-11-18 (later): steadier rendering
+- **Problem:** Cesium re-picks tile detail on almost every camera move (`globe.maximumScreenSpaceError` default 2) and keeps only 100 tiles (`tileCacheSize`), so the map kept re-sharpening and re-loading while panning.
+- **Change:** `Detail` selector in the Layers panel (Low = 8, Medium = 4 (default), High = 2, stored in localStorage), `tileCacheSize = 1000`, `preloadSiblings = false` (`src/map.ts`). Higher error value = detail changes only after larger zoom steps.
+- **Measured** (headless browser, 40 identical small camera moves near Grossglockner, one run each so treat as indicative): High 113 tiles drawn / 35 tile requests / 15 render-set changes; Medium 58 / 15 / 14; Low 27 / 14 / 9.
+- **Trade-off:** lower detail looks blurrier at a given zoom. Not judged by eye on real hardware.

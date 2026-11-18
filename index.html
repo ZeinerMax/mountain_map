@@ -26,6 +26,13 @@
         <label><input type="checkbox" id="ovToggle" checked /> Tracestrack Topo overlay</label>
         <label>Opacity <input type="range" id="ovOpacity" min="0" max="1" step="0.05" value="0.85" /></label>
         <label><input type="checkbox" id="baseToggle" checked /> Satellite base (MapTiler)</label>
+        <label>Detail
+          <select id="detailSelect" title="Higher detail re-renders more while you move">
+            <option value="low">Low (steady, fastest)</option>
+            <option value="medium">Medium</option>
+            <option value="high">High (sharpest, re-renders most)</option>
+          </select>
+        </label>
       </section>
 
       <section>

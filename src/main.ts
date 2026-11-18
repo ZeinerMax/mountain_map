@@ -1,6 +1,6 @@
 import './base';
 import './style.css';
-import { createMap } from './map';
+import { createMap, loadDetail, setDetail, type DetailLevel } from './map';
 import { RouteManager } from './routes';
 import { HutSearch } from './huts';
 import { initSearch } from './search';
@@ -26,6 +26,9 @@ baseToggle.disabled = !ctx.base;
 ovToggle.onchange = () => { if (ctx.overlay) ctx.overlay.show = ovToggle.checked; };
 ovOpacity.oninput = () => { if (ctx.overlay) ctx.overlay.alpha = parseFloat(ovOpacity.value); };
 baseToggle.onchange = () => { if (ctx.base) ctx.base.show = baseToggle.checked; };
+const detailSelect = $<HTMLSelectElement>('detailSelect');
+detailSelect.value = loadDetail();
+detailSelect.onchange = () => setDetail(ctx.viewer, detailSelect.value as DetailLevel);
 
 const routes = new RouteManager(ctx);
 const huts = new HutSearch(ctx.viewer);
