@@ -36,8 +36,8 @@ export function densify(pts: Pt[], maxSamples = 1200, minStep = 20): { p: Pt; di
   return out;
 }
 
-/** Ascent/descent with a hysteresis threshold to suppress sampling noise. */
-export function ascentDescent(eles: number[], threshold = 3): { ascent: number; descent: number } {
+/** Ascent/descent with a hysteresis threshold (10 m) to suppress terrain-sampling noise (3 m inflated the Tour du Mont Blanc to 15,000 m ascent). */
+export function ascentDescent(eles: number[], threshold = 10): { ascent: number; descent: number } {
   if (eles.length === 0) return { ascent: 0, descent: 0 };
   let ascent = 0, descent = 0, ref = eles[0];
   for (const e of eles) {

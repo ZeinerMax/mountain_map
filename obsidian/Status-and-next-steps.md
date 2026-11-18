@@ -10,3 +10,6 @@ Back: [[Mountain-map-index]]
 
 ## 2026-11-17 global search
 Search bar added (`src/search.ts`): Photon for peaks/huts/bivouacs, Waymarked Trails for routes, Overpass for route geometry. See README section 'global search'. Not yet tested in browser, not deployed. Known issue: alternative route variants get chained into one line. Sources: [[Data-sources]]
+
+## 2026-11-18
+Local Alps index (`public/data/poi-alps.json`, 108k places) replaces Photon; route join fixed; browser-tested. Next: more regions via `scripts/build-index.mjs`, route variants, better ascent. See README 2026-11-18. [[Data-sources]]

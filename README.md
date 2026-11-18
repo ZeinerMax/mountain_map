@@ -27,7 +27,9 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 | `profile.ts` | elevation profile canvas with hover marker |
 | `geo.ts`, `gpx.ts` | haversine/ascent/descent, GPX parse/build |
 | `huts.ts` | view-based Overpass hut/bivouac search, markers, details panel (also shows peaks/huts picked in the global search) |
-| `search.ts` | global search bar with suggestions: peaks/huts/bivouacs (Photon) + routes (Waymarked Trails), route geometry via Overpass |
+| `search.ts` | global search bar: local index for peaks/huts/bivouacs + Waymarked Trails for routes; route geometry via Overpass |
+| `poi.ts` | loads and searches the local index `public/data/poi-alps.json` (accent-insensitive, ß/ø handled) |
+| `scripts/build-index.mjs` | builds the index from Overpass in 1 degree tiles (resumable, cache in `.cache/`, splits failing tiles) |
 | `overpass.ts` | shared Overpass client with fallback servers |
 | `hud.ts` | compass + tilt, cursor coords/elevation/slope, scale bar |
 
@@ -45,7 +47,7 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 | Route draw/edit/delete, distance, ascent/descent, profile | implemented; untested in browser |
 | GPX import/export, localStorage | implemented; untested in browser |
 | Hut search + markers + details (current view) | implemented; untested against live Overpass |
-| Global search bar with suggestions (peaks, huts, bivouacs, routes, whole world) | implemented 2026-11-17; APIs tested with curl, UI not yet seen in a browser; not deployed |
+| Global search bar with suggestions (peaks, huts, bivouacs from local Alps index; routes worldwide) | implemented and browser-tested 2026-11-18 (16/17 automated checks; 1 failure was an Overpass timeout) |
 | Compass, pitch/tilt | implemented; untested |
 | Cursor coords/elevation/slope, scale | implemented; untested |
 
@@ -98,3 +100,12 @@ Notes for resuming: `obsidian/`, `CLAUDE.md`.
 - **Measured:** Walker's Haute Route (997 ways, 26,000 points) took ~35 s and 1.9 MB from Overpass. Long routes are slow to load.
 - **Known limitation:** routes with alternative variants are chained into one line, so length can exceed the official one (this route: 292 km vs 209 km, with one 25 km straight jump between branches). A proper fix would draw each way as its own segment.
 - **Untested:** typing/dropdown/keyboard behaviour and layout in a browser; Photon fair-use terms not read in full.
+
+### 2026-11-18: local index, browser test, route fix
+- **Photon dropped.** Its public server timed out on every request on 2026-11-17. Replaced by a local index `public/data/poi-alps.json` (108,191 named places: 88,458 peaks, 4,483 alpine huts, 2,148 bivouacs, 13,102 shelters; 6.5 MB, ~2.4 MB gzipped; built 2026-11-17/18, no tiles missing). Served as a static file by Vercel, searched in the browser, loaded on first search.
+- **Difficult part - building the index.** One world-wide Overpass query times out, so `scripts/build-index.mjs` queries 1 degree tiles (78 for the Alps). The public servers returned 502/504 for hours; the first run crashed on tile 45 and lost everything because it only wrote at the end. Fixed: per-tile cache in `.cache/` (resume), automatic splitting into quarter tiles, skipped boxes listed in the file's `incomplete` field and retried on rerun. Total time about 12 hours of waiting, mostly Overpass.
+- **Search limits.** Only the Alps (lat 43.5-48.3, lon 4.8-17.0). Unnamed huts are not indexed. Up to 6 peaks and 6 huts shown so huts are not crowded out. Index must be refreshed by rerunning the script (delete `.cache/` first for fresh data). Data is OSM, ODbL, attribution in the UI.
+- **Browser test** (Playwright driving Edge, headless): typing, suggestions, Enter, details panel, route loading, layout on 1366 px and 390 px. Found and fixed: ß not matched (Großglockner), huts crowded out by peaks.
+- **Route geometry fix.** Joining all sub-relations greedily made the Tour du Mont Blanc 299 km / 29,600 m ascent. Now uses the relation's own ways in member order and skips alternative/excursion roles. Result: TMB 182 km (official ~170), Walker's Haute Route 268 km (official ~209, variants remain). Load time 75-105 s, dominated by Overpass.
+- **Ascent is approximate.** Terrain-sampled ascent is inflated (TMB ~14,000 m vs ~10,000 m commonly quoted); hysteresis threshold raised 3 m -> 10 m, only a small improvement. Do not treat as survey-grade.
+- **Known issues.** Route loading fails when Overpass is down (message shown, retry). Desktop headless screenshots showed a black globe (software WebGL in the test browser), not checked on real hardware by me.

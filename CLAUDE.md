@@ -12,3 +12,6 @@
 - No hard-coded keys; all URLs in config.ts. Mark unverified facts with `ASSUMPTION`/`PARTLY VERIFIED` comments.
 - Cesium static files: copied to `/cesium` in build (vite.config.ts, `stripBase: 4`), served from node_modules in dev.
 - Update README.md + obsidian/ notes after significant changes. Do not commit unless asked.
+
+## Search index
+`node scripts/build-index.mjs alps` rebuilds `public/data/poi-alps.json` (hours; resumable via `.cache/`). Add regions in the script AND `REGIONS` in `src/poi.ts`.

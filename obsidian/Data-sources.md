@@ -13,3 +13,6 @@ Keys: `.env` (see `.env.example`). Status: [[Status-and-next-steps]]
 - Photon `photon.komoot.io/api/?q=&osm_tag=natural:peak` - verified, fair-use public instance.
 - Waymarked Trails `/api/v1/list/search?query=` - verified; no geometry endpoint, so geometry comes from Overpass.
 - Overpass fallbacks: maps.mail.ru works; private.coffee/kumi did not answer.
+
+## Update 2026-11-18
+Photon no longer used (timeouts). Peaks/huts come from the local OSM index built by `scripts/build-index.mjs` (Overpass, Alps only). Routes: Waymarked Trails list + Overpass geometry.

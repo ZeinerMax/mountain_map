@@ -2,17 +2,16 @@ import type { HutSearch, Hut } from './huts';
 import type { RouteManager } from './routes';
 import { overpass } from './overpass';
 import { haversine, type Pt } from './geo';
+import { loadIndex, searchIndex, indexReady } from './poi';
 
 /*
- * Global search with suggestions (not limited to the current view).
- *  - Peaks / huts / bivouacs: Photon (photon.komoot.io), OSM-based geocoder built for search-as-you-type, no key.
- *    VERIFIED by request 2026-11-17: osm_tag filter works (natural:peak, tourism:alpine_hut), CORS open.
- *    Public instance is fair-use only (no SLA): self-host or swap PHOTON_URL for production. Terms not read in full.
- *  - Routes: Waymarked Trails API (hiking.waymarkedtrails.org/api/v1/list/search), CORS open, verified by request.
- *    It lists routes but returns no simple geometry, so geometry is fetched from Overpass (relation + sub-relations).
- *  Nominatim is NOT used: its usage policy forbids autocomplete.
+ * Global search with suggestions.
+ *  - Peaks / huts / bivouacs / shelters: LOCAL index (src/poi.ts, public/data/poi-*.json, built from OSM by
+ *    scripts/build-index.mjs). Instant, no third-party server. Covers only the regions that were built (currently the Alps).
+ *  - Routes: Waymarked Trails API (hiking.waymarkedtrails.org/api/v1/list/search), CORS open, verified by request
+ *    (~0.9 s on 2026-11-17). It returns no simple geometry, so geometry is fetched from Overpass (relation + sub-relations).
+ *  Photon was dropped (public instance timed out on 2026-11-17); Nominatim is not used: its policy forbids autocomplete.
  */
-const PHOTON_URL = 'https://photon.komoot.io/api/';
 const WMT_URL = 'https://hiking.waymarkedtrails.org/api/v1/list/search';
 
 type Kind = Hut['kind'];
@@ -24,25 +23,6 @@ interface Suggestion {
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const OSM_TYPE: Record<string, string> = { N: 'node', W: 'way', R: 'relation' };
-
-async function photon(q: string, osmTag: string, kind: Kind, signal: AbortSignal): Promise<Suggestion[]> {
-  const url = `${PHOTON_URL}?q=${encodeURIComponent(q)}&limit=5&osm_tag=${encodeURIComponent(osmTag)}`;
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`Photon HTTP ${res.status}`);
-  const json = (await res.json()) as { features: any[] };
-  return json.features
-    .filter((f) => f.properties?.name)
-    .map((f): Suggestion => {
-      const p = f.properties, [lon, lat] = f.geometry.coordinates;
-      const where = [p.city ?? p.county, p.state, p.country].filter(Boolean).join(', ');
-      const hut: Hut = {
-        id: `${OSM_TYPE[p.osm_type] ?? 'node'}/${p.osm_id}`, name: p.name, kind, lat, lon,
-        tags: { name: p.name },
-      };
-      return { group: kind === 'peak' ? 'Peaks' : 'Huts & bivouacs', title: p.name, sub: where, hut };
-    });
-}
 
 async function wmt(q: string, signal: AbortSignal): Promise<Suggestion[]> {
   const res = await fetch(`${WMT_URL}?query=${encodeURIComponent(q)}&limit=6`, { signal });
@@ -56,26 +36,27 @@ async function wmt(q: string, signal: AbortSignal): Promise<Suggestion[]> {
     }));
 }
 
-/** Chain OSM ways into one polyline by greedily attaching the nearest unused way at either end. */
-function chainWays(ways: Pt[][]): Pt[] {
-  const rest = ways.filter((w) => w.length > 1);
-  if (!rest.length) return [];
-  let chain = rest.shift()!.slice();
-  while (rest.length) {
-    const head = chain[0], tail = chain[chain.length - 1];
-    let bi = 0, bd = Infinity, bMode = 0;
-    rest.forEach((w, i) => {
-      const a = w[0], b = w[w.length - 1];
-      const opts: [number, number][] = [
-        [haversine(tail, a), 0], [haversine(tail, b), 1], [haversine(head, b), 2], [haversine(head, a), 3],
-      ];
-      for (const [d, m] of opts) if (d < bd) { bd = d; bi = i; bMode = m; }
-    });
-    const w = rest.splice(bi, 1)[0];
-    if (bMode === 0) chain = chain.concat(w);
-    else if (bMode === 1) chain = chain.concat(w.slice().reverse());
-    else if (bMode === 2) chain = w.concat(chain);
-    else chain = w.slice().reverse().concat(chain);
+// Member roles that are not part of the main line of a route relation.
+const SIDE_ROLES = /^(alternative|alternate|excursion|approach|connection|spur|variant|stage)/i;
+
+interface RelMember { type: string; ref: number; role: string; geometry?: { lat: number; lon: number }[] }
+
+/** Join ways in relation (member) order, flipping each so it continues from the previous one. Gaps become straight lines. */
+function joinInOrder(ways: Pt[][]): Pt[] {
+  const list = ways.filter((w) => w.length > 1);
+  if (!list.length) return [];
+  let chain = list[0].slice();
+  if (list.length > 1) {
+    // orient the first way towards the second
+    const n = list[1], ends = [n[0], n[n.length - 1]];
+    const dEnd = Math.min(...ends.map((e) => haversine(chain[chain.length - 1], e)));
+    const dStart = Math.min(...ends.map((e) => haversine(chain[0], e)));
+    if (dStart < dEnd) chain.reverse();
+  }
+  for (const w of list.slice(1)) {
+    const tail = chain[chain.length - 1];
+    const forward = haversine(tail, w[0]) <= haversine(tail, w[w.length - 1]);
+    chain = chain.concat(forward ? w : w.slice().reverse());
   }
   // Thin out vertices closer than 10 m to keep the route light.
   const out: Pt[] = [chain[0]];
@@ -83,14 +64,28 @@ function chainWays(ways: Pt[][]): Pt[] {
   return out;
 }
 
+const wayPts = (m: RelMember): Pt[] | undefined =>
+  m.type === 'way' && m.geometry && !SIDE_ROLES.test(m.role) ? m.geometry.map((g) => ({ lat: g.lat, lon: g.lon })) : undefined;
+
+/**
+ * Route geometry from the relation's own ways in their official order (alternatives/excursions skipped).
+ * Super-relations (no ways of their own) are resolved one level down, in member order.
+ * Measured 2026-11-17: the previous "all sub-relations, joined greedily" approach turned the Tour du Mont Blanc
+ * into 299 km / 29,600 m ascent because variants were chained in.
+ */
 async function fetchRouteGeometry(relId: number): Promise<Pt[]> {
-  // Ways of the relation and of its sub-relations (super-routes like long-distance paths).
-  const q = `[out:json][timeout:70];rel(${relId})->.a;rel(r.a)->.b;(way(r.a);way(r.b););out geom;`;
-  const json = await overpass(q, 75000);
-  const ways = json.elements
-    .filter((e) => e.type === 'way' && Array.isArray(e.geometry))
-    .map((e) => (e.geometry as { lat: number; lon: number }[]).map((g) => ({ lat: g.lat, lon: g.lon })));
-  return chainWays(ways);
+  const first = await overpass(`[out:json][timeout:60];rel(${relId});out geom;`, 60000);
+  const members: RelMember[] = first.elements[0]?.members ?? [];
+  let ways = members.map(wayPts).filter((w): w is Pt[] => !!w);
+  if (ways.length < 2) {
+    const subIds = members.filter((m) => m.type === 'relation' && !SIDE_ROLES.test(m.role)).map((m) => m.ref);
+    if (subIds.length) {
+      const sub = await overpass(`[out:json][timeout:60];rel(id:${subIds.slice(0, 60).join(',')});out geom;`, 75000);
+      const byId = new Map<number, RelMember[]>(sub.elements.map((e) => [e.id, e.members ?? []]));
+      ways = subIds.flatMap((id) => (byId.get(id) ?? []).map(wayPts).filter((w): w is Pt[] => !!w));
+    }
+  }
+  return joinInOrder(ways);
 }
 
 export function initSearch(huts: HutSearch, routes: RouteManager) {
@@ -125,37 +120,46 @@ export function initSearch(huts: HutSearch, routes: RouteManager) {
     list.hidden = items.length === 0;
   }
 
+  const ORDER = ['Peaks', 'Huts & bivouacs', 'Routes'];
+
+  function localSuggestions(q: string): Suggestion[] {
+    return searchIndex(q, 6).map((h): Suggestion => ({
+      group: h.peak ? 'Peaks' : 'Huts & bivouacs', title: h.hut.name, sub: h.sub, hut: h.hut,
+    }));
+  }
+  function show(local: Suggestion[], remote: Suggestion[]) {
+    items = [...local, ...remote].sort((a, b) => ORDER.indexOf(a.group) - ORDER.indexOf(b.group));
+    active = items.length ? 0 : -1;
+    render();
+  }
+
   async function run(q: string) {
     ctl?.abort();
     ctl = new AbortController();
     const my = ++seq, sig = ctl.signal;
-    setStatus('Searching…');
-    const jobs: [string, Promise<Suggestion[]>][] = [
-      ['peaks', photon(q, 'natural:peak', 'peak', sig)],
-      ['alpine huts', photon(q, 'tourism:alpine_hut', 'alpine_hut', sig)],
-      ['bivouacs', photon(q, 'tourism:wilderness_hut', 'wilderness_hut', sig)],
-      ['shelters', photon(q, 'amenity:shelter', 'shelter', sig)],
-      ['routes', wmt(q, sig)],
-    ];
-    const settled = await Promise.allSettled(jobs.map((j) => j[1]));
-    if (my !== seq) return; // a newer query superseded this one
-    const failed: string[] = [];
-    const all: Suggestion[] = [];
-    settled.forEach((r, i) => {
-      if (r.status === 'fulfilled') all.push(...r.value);
-      else if ((r.reason as Error)?.name !== 'AbortError') failed.push(jobs[i][0]);
-    });
-    const seen = new Set<string>();
-    const order = ['Peaks', 'Huts & bivouacs', 'Routes'];
-    items = all
-      .filter((s) => { const k = s.hut ? s.hut.id : `r${s.routeRelId}`; if (seen.has(k)) return false; seen.add(k); return true; })
-      .sort((a, b) => order.indexOf(a.group) - order.indexOf(b.group));
-    active = items.length ? 0 : -1;
-    render();
+    const timeout = window.setTimeout(() => ctl?.abort(), 6000); // never let a slow server stall the dropdown
+    let local: Suggestion[] = [];
+    let failed = '';
+    // 1) local index: instant once loaded
+    try {
+      if (!indexReady()) setStatus('Loading local index…');
+      await loadIndex();
+      if (my !== seq) { clearTimeout(timeout); return; }
+      local = localSuggestions(q);
+      show(local, []);
+      setStatus(local.length ? 'Searching routes…' : 'Searching routes…');
+    } catch (e) { failed = `local index (${(e as Error).message})`; setStatus('Searching routes…'); }
+    // 2) routes: arrive later, merged into the same list
+    let remote: Suggestion[] = [];
+    try { remote = await wmt(q, sig); }
+    catch (e) { if ((e as Error).name !== 'AbortError' || !sig.aborted || my === seq) failed ||= 'routes'; }
+    clearTimeout(timeout);
+    if (my !== seq) return;
+    show(local, remote);
     setStatus(
       items.length
-        ? (failed.length ? `Some sources failed: ${failed.join(', ')}` : '')
-        : failed.length ? `Search failed (${failed.join(', ')}). Try again.` : 'No results.',
+        ? (failed ? `Source unavailable: ${failed}` : '')
+        : failed ? `Search failed (${failed}). Try again.` : 'No results. The local index covers the Alps only.',
     );
   }
 
