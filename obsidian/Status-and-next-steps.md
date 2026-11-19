@@ -13,8 +13,7 @@ Updated: 2026-11-19
 - Unit tests: `npm test` (25), live API tests: `npm run test:live` (4).
 
 ## Deployment state
-- Live (https://mountain-map.vercel.app) is at commit `2c2d8fe`.
-- 2026-11-19 work is NOT committed and NOT deployed yet (waiting for the user's OK).
+- Live (https://mountain-map.vercel.app) is at commit `ea87383` (deployed 2026-11-19 with `vercel deploy --prod`). Verified on the live site: security headers present, 0 CSP violations, all tiles 200, Tour du Mont Blanc loads in ~6 s, 21/21 UI checks pass.
 
 ## Known issues
 - Walker's Haute Route is 204 km because the OSM relation itself is that long (Waymarked Trails says 209 km); official ~180 km.
@@ -25,9 +24,8 @@ Updated: 2026-11-19
 
 ## TODO (decisions needed from the user in bold)
 1. Done 2026-11-19: both API keys restricted (see [[Data-sources]] for the Tracestrack format); 2FA on Vercel enabled by the user.
-2. **Commit and deploy the 2026-11-19 work.**
-3. More regions for the index (edit `REGIONS` in `scripts/build-index.mjs` and `src/poi.ts`), then rebuild (hours).
-4. Optional: let the user pick a route's alternatives (Waymarked Trails lists them as `appendices`).
-5. Judge the 250 m fly-to distance and Detail default on real hardware.
+2. More regions for the index (edit `REGIONS` in `scripts/build-index.mjs` and `src/poi.ts`), then rebuild (hours).
+3. Optional: let the user pick a route's alternatives (Waymarked Trails lists them as `appendices`).
+4. Judge the 250 m fly-to distance and Detail default on real hardware.
 
 Related: [[Dev-log]], [[Data-sources]], [[How-to-run-and-deploy]]
