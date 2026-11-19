@@ -2,11 +2,12 @@
 3D hiking map: CesiumJS + Vite + TS. MapTiler terrain, Tracestrack Topo overlay. See README.md for details.
 
 ## Commands
-- `npm install`, `npm run dev` (localhost:5173), `npm run build` (tsc + vite), `npm run preview`
+- `npm install`, `npm run dev` (localhost:5173), `npm run build` (tsc + vite), `npm run preview` (serves dist/ with the production headers from vercel.json)
+- `npm test` (Vitest unit tests), `npm run test:live` (real Waymarked Trails API)
 - Keys in `.env` (copy `.env.example`): `VITE_MAPTILER_KEY`, `VITE_TRACESTRACK_KEY`. Never commit `.env`.
 
 ## Structure
-`src/`: base.ts (import first), config.ts, map.ts, routes.ts, profile.ts, geo.ts, gpx.ts, huts.ts, hud.ts, style.css; `index.html` holds all UI markup.
+`src/`: base.ts (import first), config.ts, map.ts, routes.ts, routeData.ts, profile.ts, geo.ts, gpx.ts, huts.ts, hud.ts, search.ts, wmt.ts, poi.ts, coords.ts, overpass.ts, style.css; `index.html` holds all UI markup. `vercel.json`: security headers (new external hosts must be added to the CSP `connect-src`/`img-src`).
 
 ## Conventions
 - No hard-coded keys; all URLs in config.ts. Mark unverified facts with `ASSUMPTION`/`PARTLY VERIFIED` comments.

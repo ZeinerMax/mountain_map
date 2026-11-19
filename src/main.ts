@@ -40,4 +40,4 @@ initInfoBar(ctx.viewer);
 $('panelToggle').onclick = () => $('panel').classList.toggle('collapsed');
 if (window.innerWidth < 700) $('panel').classList.add('collapsed');
 
-(window as unknown as { mountainMap: unknown }).mountainMap = ctx; // handy for console debugging
+(window as unknown as { mountainMap: unknown }).mountainMap = { ...ctx, routes, huts }; // handy for console debugging and browser tests

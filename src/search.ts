@@ -6,16 +6,17 @@ import * as Cesium from 'cesium';
 import { loadIndex, searchIndex, indexReady, fold } from './poi';
 import { parseCoords, formatCoords, type LatLon } from './coords';
 import { flyToPlace, terrainHeight } from './map';
+import { WMT_API, fetchWmtRoute } from './wmt';
 
 /*
  * Global search with suggestions.
  *  - Peaks / huts / bivouacs / shelters: LOCAL index (src/poi.ts, public/data/poi-*.json, built from OSM by
  *    scripts/build-index.mjs). Instant, no third-party server. Covers only the regions that were built (currently the Alps).
  *  - Routes: Waymarked Trails API (hiking.waymarkedtrails.org/api/v1/list/search), CORS open, verified by request
- *    (~0.9 s on 2026-11-17). It returns no simple geometry, so geometry is fetched from Overpass (relation + sub-relations).
+ *    (~0.9 s on 2026-11-17). Route lines come from its details endpoint (src/wmt.ts); Overpass is only the fallback.
  *  Photon was dropped (public instance timed out on 2026-11-17); Nominatim is not used: its policy forbids autocomplete.
  */
-const WMT_URL = 'https://hiking.waymarkedtrails.org/api/v1/list/search';
+const WMT_URL = `${WMT_API}/list/search`;
 
 type Kind = Hut['kind'];
 interface Suggestion {
@@ -97,6 +98,25 @@ async function fetchRouteGeometry(relId: number): Promise<Pt[]> {
     }
   }
   return joinInOrder(ways);
+}
+
+/**
+ * Main line of a route. Waymarked Trails first (fast, ordered, alternatives already separated; see wmt.ts),
+ * Overpass as the fallback when it is down or returns no geometry.
+ */
+async function loadRoute(relId: number, onFallback: () => void): Promise<Pt[]> {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const pts = await fetchWmtRoute(relId, ctl.signal);
+    if (pts.length >= 2) return pts;
+  } catch (e) {
+    console.warn('Waymarked Trails route failed, using Overpass', e);
+  } finally { clearTimeout(timer); }
+  onFallback();
+  const pts = await fetchRouteGeometry(relId);
+  if (pts.length < 2) throw new Error('route has no usable geometry');
+  return pts;
 }
 
 export function initSearch(huts: HutSearch, routes: RouteManager, viewer: Cesium.Viewer) {
@@ -229,10 +249,9 @@ export function initSearch(huts: HutSearch, routes: RouteManager, viewer: Cesium
         if (tags) huts.show({ ...s.hut, tags }, false);
       } catch { /* keep the basic info */ }
     } else if (s.routeRelId) {
-      setStatus('Loading route geometry from OpenStreetMap…');
+      setStatus('Loading route…');
       try {
-        const pts = await fetchRouteGeometry(s.routeRelId);
-        if (pts.length < 2) throw new Error('route has no usable geometry');
+        const pts = await loadRoute(s.routeRelId, () => setStatus('Waymarked Trails unavailable, trying OpenStreetMap (can take a minute)…'));
         routes.addRoute(s.title, pts);
         setStatus('');
       } catch (e) { setStatus(`Could not load route: ${(e as Error).message}`); }

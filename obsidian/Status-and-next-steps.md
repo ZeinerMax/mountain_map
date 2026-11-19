@@ -1,31 +1,33 @@
 # Status and next steps
 Back: [[Mountain-map-index]]
-Updated: 2026-11-18
+Updated: 2026-11-19
 
-## What works (browser-tested unless noted)
+## What works (browser-tested 2026-11-19 in headless Edge, production build with the production security headers)
 - 3D terrain, satellite base, Tracestrack Topo overlay with opacity and toggle; Detail selector.
-- Search bar: peaks, huts, bivouacs, shelters (local Alps index), routes (Waymarked Trails), coordinates. Details panel, markers, fly-to.
-- Routes: draw/edit/delete, distance, ascent/descent, elevation profile, GPX import/export, saved in localStorage. (Drawing and editing by hand were NOT tested in the browser.)
+- Search bar: peaks, huts, bivouacs, shelters (local Alps index), routes (Waymarked Trails), coordinates.
+- Route loading: Waymarked Trails route details, 2.5-6.5 s including elevation (was 75-105 s via Overpass). Main line only, alternatives excluded. Overpass is the fallback.
+  - Tour du Mont Blanc 162 km, ↗ 9,938 m (official ~170 km / ~10,000 m). West Highland Way 153 km (official 154).
+- Routes: draw/edit/delete, Shift+click insert (was broken, fixed), undo (button + Ctrl+Z, 30 steps), GPX import/export incl. waypoints, saved in localStorage. 21 automated UI checks pass.
 - Compass, tilt, cursor coordinates/elevation/slope, scale bar.
+- Security headers (CSP etc.) in `vercel.json`; 0 CSP violations; `npm audit`: 0 vulnerabilities.
+- Unit tests: `npm test` (25), live API tests: `npm run test:live` (4).
 
 ## Deployment state
 - Live (https://mountain-map.vercel.app) is at commit `2c2d8fe`.
-- GitHub `main` is at `98953a8` (adds the Detail selector). **Needs `vercel deploy --prod` to go live.** The repo is not connected to Vercel, so pushes do not auto-deploy.
+- 2026-11-19 work is NOT committed and NOT deployed yet (waiting for the user's OK).
 
 ## Known issues
-- Loading a route's line depends on public Overpass servers: 75-105 s for long routes, fails when they are down (message shown, retry).
-- Ascent is approximate (terrain-sampled, inflated): Tour du Mont Blanc about 14,000 m vs about 10,000 m quoted. Routes with variants (Walker's Haute Route: 268 km vs 209 km) include the variants.
+- Walker's Haute Route is 204 km because the OSM relation itself is that long (Waymarked Trails says 209 km); official ~180 km.
+- Small gaps (0.3-1 km) inside some OSM routes are bridged with straight lines.
 - Search index covers only the Alps (lat 43.5-48.3, lon 4.8-17.0). Unnamed huts missing.
-- Black globe seen in desktop headless screenshots (software rendering); not checked on real hardware by Claude.
+- CSP must allow `'unsafe-eval'`: Knockout (bundled in Cesium's widgets) evaluates strings at start-up. Everything else is strict.
 - Tracestrack usage terms unread.
 
 ## TODO (decisions needed from the user in bold)
-1. **Restrict both API keys to the Vercel domain and `localhost`** (keys are public in the browser bundle). Enable 2FA on Vercel.
-2. Deploy the latest commit.
-3. More regions for the index (edit `REGIONS` in `scripts/build-index.mjs` and `src/poi.ts`), then rebuild.
-4. Draw each route piece separately to remove variants; better ascent calculation.
-5. Self-host or pick a more reliable Overpass source; consider storing popular route geometries.
-6. Split the ~4 MB Cesium bundle; undo for route edits; GPX waypoint import.
-7. Judge the 250 m fly-to distance and Detail default on real hardware.
+1. Done 2026-11-19: both API keys restricted (see [[Data-sources]] for the Tracestrack format); 2FA on Vercel enabled by the user.
+2. **Commit and deploy the 2026-11-19 work.**
+3. More regions for the index (edit `REGIONS` in `scripts/build-index.mjs` and `src/poi.ts`), then rebuild (hours).
+4. Optional: let the user pick a route's alternatives (Waymarked Trails lists them as `appendices`).
+5. Judge the 250 m fly-to distance and Detail default on real hardware.
 
 Related: [[Dev-log]], [[Data-sources]], [[How-to-run-and-deploy]]

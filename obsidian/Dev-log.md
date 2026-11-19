@@ -22,6 +22,17 @@ Back: [[Mountain-map-index]]
 - **Steadier rendering:** Detail selector (Low/Medium/High), bigger tile cache. Measured over 40 small moves: High 35 tile requests, Medium 15, Low 14.
 - Commits: `de15d40` (local index), `2c2d8fe` (coordinates, fly-to; deployed), `98953a8` (detail selector; pushed, **not yet deployed**).
 
+## 2026-11-19
+- **Security pass.** `npm audit`: 0 vulnerabilities. Every place where OSM, search or GPX text reaches the page was checked: escaped or set as plain text. New `vercel.json` with Content-Security-Policy, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS; `npm run preview` serves the same headers.
+- **Problem:** with a strict CSP the map did not start at all. **Cause:** Knockout (bundled inside Cesium) runs `eval("this")` at load and builds its UI bindings from strings. **Fix:** allow `'unsafe-eval'` only; scripts from other sites and injected scripts stay blocked.
+- **Route loading rewritten.** Waymarked Trails `/api/v1/details/relation/{id}` (thought to have no geometry) returns the whole route tree with geometry in 30-300 ms, main line and alternatives (`appendices`) separated. New `src/wmt.ts`; Overpass is now only the fallback. TMB: 162 km / 9,938 m (was 182 km / ~14,000 m with variants).
+- **Problem:** Stubaier Höhenweg had a 14.6 km straight jump. **Cause:** WMT marks it `linear: "no"` and lists a 1.2 km middle piece last. **Fix:** for unsorted routes, order stretches by nearest ends.
+- **Ascent** was not changed: the inflated figure came from the variants, not from the formula.
+- **Bug found by browser test:** Shift+click insert never worked (Cesium sends Shift-clicks only to actions registered with the SHIFT modifier). Fixed.
+- **New:** undo (button + Ctrl+Z, 30 steps), GPX waypoints (import, markers, export, saved with the route), validation of saved routes (corrupt storage no longer breaks start-up), visible warning when the browser storage is full, coordinates rounded on save (~40% smaller), 30 MB GPX limit, favicon.
+- **Bundle:** Cesium split into its own chunk (4.2 MB); the app chunk is 40 KB, so updates do not re-download Cesium (`/assets` cached as immutable).
+- **Tests added:** Vitest unit tests (25) and live Waymarked Trails tests (4); browser UI test with 21 checks (scratch script, not in the repo).
+
 ## Lessons
 - Public OSM-related servers are unreliable: always cache, retry, fall back, and show errors.
 - Test in a real browser: several bugs only appeared there.

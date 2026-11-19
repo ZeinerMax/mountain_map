@@ -5,7 +5,7 @@ Back: [[Home]]
 
 - Live: https://mountain-map.vercel.app
 - Repo: `ZeinerMax/mountain_map` (folder `C:\VS\Claude\Mountain_map`)
-- Last updated: 2026-11-18
+- Last updated: 2026-11-19
 
 ## Notes
 - [[Architecture]] - stack, files, how the pieces fit

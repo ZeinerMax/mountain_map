@@ -10,7 +10,9 @@ cp .env.example .env     # then fill in the keys (Windows: copy .env.example .en
 npm install
 npm run dev              # http://localhost:5173
 npm run build            # type-check + production build -> dist/
-npm run preview          # serve dist/
+npm run preview          # serve dist/ with the production security headers
+npm test                 # unit tests (Vitest)
+npm run test:live        # tests against the real Waymarked Trails API
 ```
 Keys go in `.env` (git-ignored): `VITE_MAPTILER_KEY` (https://cloud.maptiler.com/account/keys/) and `VITE_TRACESTRACK_KEY` (Tracestrack console). `VITE_*` values end up in the client bundle: restrict keys by origin in the provider consoles. Without keys the app starts and shows a red banner.
 
@@ -23,15 +25,19 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 | `base.ts` | sets `CESIUM_BASE_URL` (imported first) |
 | `config.ts` | env keys, tile/terrain/Overpass URLs |
 | `map.ts` | Viewer, terrain, satellite base, Topo overlay, credits, `pickGround` |
-| `routes.ts` | draw/edit/delete routes, stats, GPX import/export UI, localStorage |
+| `routes.ts` | draw/edit/delete routes, undo (button + Ctrl+Z), GPX waypoint markers, stats, GPX import/export UI, localStorage |
+| `routeData.ts` | route/waypoint types, validation of saved routes, compact serialisation |
+| `wmt.ts` | Waymarked Trails route details -> main line of a route (alternatives skipped) |
 | `profile.ts` | elevation profile canvas with hover marker |
-| `geo.ts`, `gpx.ts` | haversine/ascent/descent, GPX parse/build |
+| `geo.ts`, `gpx.ts` | haversine/ascent/descent, GPX parse/build (tracks, routes, waypoints) |
 | `huts.ts` | view-based Overpass hut/bivouac search, markers, details panel (also shows peaks/huts picked in the global search) |
-| `search.ts` | global search bar: local index for peaks/huts/bivouacs + Waymarked Trails for routes; route geometry via Overpass |
+| `search.ts` | global search bar: local index for peaks/huts/bivouacs + Waymarked Trails for routes; route line from Waymarked Trails (`wmt.ts`), Overpass fallback |
 | `poi.ts` | loads and searches the local index `public/data/poi-alps.json` (accent-insensitive, ß/ø handled) |
 | `scripts/build-index.mjs` | builds the index from Overpass in 1 degree tiles (resumable, cache in `.cache/`, splits failing tiles) |
 | `overpass.ts` | shared Overpass client with fallback servers |
 | `hud.ts` | compass + tilt, cursor coords/elevation/slope, scale bar |
+
+Also: `vercel.json` (security headers incl. Content-Security-Policy, cache headers; also applied by `npm run preview`), `tests/` (Vitest).
 
 ## Data sources & status of verification
 - **VERIFIED** (MapTiler Cesium docs): terrain `https://api.maptiler.com/tiles/terrain-quantized-mesh-v2/?key=KEY` via `CesiumTerrainProvider.fromUrl`; satellite `maps/satellite-v4/{z}/{x}/{y}.jpg?key=KEY`.
@@ -44,8 +50,9 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 | Feature | Status |
 |---|---|
 | 3D terrain + Topo overlay, opacity, toggle | implemented; **not tested with real keys** |
-| Route draw/edit/delete, distance, ascent/descent, profile | implemented; untested in browser |
-| GPX import/export, localStorage | implemented; untested in browser |
+| Route draw/edit/delete, Shift+click insert, undo, distance, ascent/descent, profile | browser-tested 2026-11-19 (21 automated UI checks) |
+| GPX import/export incl. waypoints, localStorage | browser-tested 2026-11-19 |
+| Route search + loading (Waymarked Trails, Overpass fallback) | browser-tested 2026-11-19: 2.5-6.5 s; TMB 162 km / ↗ 9,938 m |
 | Hut search + markers + details (current view) | implemented; untested against live Overpass |
 | Global search bar with suggestions (peaks, huts, bivouacs from local Alps index; routes worldwide) | implemented and browser-tested 2026-11-18 (16/17 automated checks; 1 failure was an Overpass timeout) |
 | Compass, pitch/tilt | implemented; untested |
@@ -54,11 +61,10 @@ CesiumJS + Vite + TypeScript, no UI framework. Cesium natively loads quantized-m
 Verified by running: MapTiler terrain+satellite and Tracestrack tile requests return 200 with real keys; Web-Mercator tiling scheme set for both imagery layers (was missing). Not yet seen in a browser. Also: `npm run build` passes (tsc + vite); dev server serves index, `/src/main.ts` and Cesium workers/widgets with HTTP 200.
 
 ## Open issues / next steps
-1. Add real keys and test everything in a browser (terrain loads, overlay URL works, 256 vs 512 px tiles).
+1. Restrict both API keys to the Vercel domain and `localhost` (MapTiler / Tracestrack consoles); 2FA on Vercel.
 2. Verify Tracestrack docs/terms and the exact style name.
-3. Bundle is ~4 MB (Cesium); consider code-splitting.
-4. Undo for route edits, route elevation from terrain sampling accuracy (`sampleTerrainMostDetailed`), waypoint (wpt) GPX import.
-5. Self-host/alternate Overpass for production.
+3. More regions for the search index.
+4. Optional: let users choose a route's alternatives (Waymarked Trails `appendices`).
 
 Notes for resuming: `obsidian/`, `CLAUDE.md`.
 
@@ -122,3 +128,10 @@ Notes for resuming: `obsidian/`, `CLAUDE.md`.
 - **Change:** `Detail` selector in the Layers panel (Low = 8, Medium = 4 (default), High = 2, stored in localStorage), `tileCacheSize = 1000`, `preloadSiblings = false` (`src/map.ts`). Higher error value = detail changes only after larger zoom steps.
 - **Measured** (headless browser, 40 identical small camera moves near Grossglockner, one run each so treat as indicative): High 113 tiles drawn / 35 tile requests / 15 render-set changes; Medium 58 / 15 / 14; Low 27 / 14 / 9.
 - **Trade-off:** lower detail looks blurrier at a given zoom. Not judged by eye on real hardware.
+
+### 2026-11-19: security, fast routes, undo, waypoints, tests
+- **Security:** `npm audit` 0 vulnerabilities; every place where external text (OSM, search, GPX) reaches the page checked (escaped or plain text). `vercel.json` adds CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy, HSTS. **Difficult part:** with a strict CSP the map did not start; Knockout (inside Cesium's widgets) evaluates strings, so the CSP allows `'unsafe-eval'` (external and injected scripts stay blocked). Tested: 0 CSP violations in the production build.
+- **Route loading:** Waymarked Trails `/api/v1/details/relation/{id}` does return geometry (a route tree with main line and `appendices`), in 30-300 ms. Now used first (`src/wmt.ts`), Overpass only as fallback. Load time incl. elevation 2.5-6.5 s (was 75-105 s). Tour du Mont Blanc 162 km / ↗ 9,938 m (official ~170 km / ~10,000 m): the inflated ascent came from the variants, not from the formula. Unsorted routes (WMT `linear: "no"`, e.g. Stubaier Höhenweg, which had a 14.6 km straight jump) are reordered by nearest ends.
+- **Routes UI:** undo (30 steps; button and Ctrl+Z), GPX waypoints (import, labelled markers, export, saved with the route), Shift+click insert fixed (Cesium only delivers Shift-clicks to SHIFT-modifier actions; it never worked before), saved routes validated on load, warning when browser storage is full, coordinates rounded on save, 30 MB GPX limit.
+- **Bundle:** Cesium in its own chunk; app chunk 40 KB; `/assets` cached as immutable.
+- **Tests:** 25 unit tests, 4 live API tests, 21-check browser UI test (scratch script, not in the repo).

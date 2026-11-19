@@ -6,14 +6,18 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:live": "vitest run --mode live tests/wmt.live.test.ts"
   },
   "dependencies": {
     "cesium": "^1.147.0"
   },
   "devDependencies": {
+    "happy-dom": "^21.0.4",
     "typescript": "^7.0.2",
     "vite": "^8.3.8",
-    "vite-plugin-static-copy": "^4.1.1"
+    "vite-plugin-static-copy": "^4.1.1",
+    "vitest": "^5.1.1"
   }
 }

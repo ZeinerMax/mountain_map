@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>mountain_map</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 </head>
 <body>
   <div id="cesiumContainer"></div>
@@ -42,13 +43,14 @@
           <button id="btnFinish" disabled>Finish</button>
           <button id="btnEdit" disabled>Edit</button>
           <button id="btnDelete" disabled>Delete</button>
+          <button id="btnUndo" disabled title="Undo (Ctrl+Z)">Undo</button>
         </div>
         <div class="row">
           <button id="btnImport">Import GPX</button>
           <button id="btnExport" disabled>Export GPX</button>
           <input type="file" id="gpxFile" accept=".gpx,application/gpx+xml,text/xml" hidden />
         </div>
-        <p class="hint" id="routeHint">Draw: click to add points, double-click or Finish to end. Edit: drag points, right-click a point to delete it, Shift+click to insert.</p>
+        <p class="hint" id="routeHint">Draw: click to add points, double-click or Finish to end. Edit: drag points, right-click a point to delete it, Shift+click to insert. Undo: Ctrl+Z.</p>
         <ul id="routeList"></ul>
         <div id="routeStats"></div>
       </section>

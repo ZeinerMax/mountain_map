@@ -2,20 +2,20 @@ import * as Cesium from 'cesium';
 import type { MapCtx } from './map';
 import { pickGround } from './map';
 import { ascentDescent, densify, fmtKm, haversine, lengthM, type Pt } from './geo';
-import { buildGpx, parseGpx } from './gpx';
+import { GPX_MAX_BYTES, buildGpx, parseGpx } from './gpx';
 import { ROUTES_STORAGE_KEY } from './config';
 import { initProfile } from './profile';
+import { cloneRoute, sanitizeRoutes, serializeRoutes, uid, type RouteData } from './routeData';
 
 export interface ProfilePt { dist: number; ele: number; lon: number; lat: number }
 export interface RouteStats {
   length: number; ascent: number; descent: number; min: number; max: number;
   source: 'terrain' | 'gpx' | 'none'; profile: ProfilePt[];
 }
-export interface Route { id: string; name: string; points: Pt[]; stats?: RouteStats }
+export interface Route extends RouteData { stats?: RouteStats }
 
 type Mode = 'idle' | 'draw' | 'edit';
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
-const uid = () => Math.random().toString(36).slice(2, 10);
 
 export class RouteManager {
   routes: Route[] = [];
@@ -26,6 +26,7 @@ export class RouteManager {
   private handles: Cesium.Entity[] = [];
   private hover?: Cesium.Entity;
   private dragIdx = -1;
+  private dragMoved = false;
   private statsVersion = new Map<string, number>();
   private profile = initProfile((p) => this.setHover(p));
   private handler: Cesium.ScreenSpaceEventHandler;
@@ -43,19 +44,52 @@ export class RouteManager {
   }
 
   /* ---------- persistence ---------- */
+  private saveWarned = false;
   private save() {
     try {
-      localStorage.setItem(
-        ROUTES_STORAGE_KEY,
-        JSON.stringify(this.routes.map((r) => ({ id: r.id, name: r.name, points: r.points }))),
-      );
-    } catch (e) { console.warn('Could not save routes', e); }
+      localStorage.setItem(ROUTES_STORAGE_KEY, serializeRoutes(this.routes));
+      this.saveWarned = false;
+    } catch (e) {
+      console.warn('Could not save routes', e);
+      // Usually the ~5 MB browser storage limit. Tell the user once instead of silently losing work.
+      if (!this.saveWarned) {
+        this.saveWarned = true;
+        alert('Routes could not be saved in this browser (storage full or disabled). Export them as GPX to keep them, or delete some long routes.');
+      }
+    }
   }
   private load() {
     try {
       const raw = localStorage.getItem(ROUTES_STORAGE_KEY);
-      if (raw) this.routes = (JSON.parse(raw) as Route[]).filter((r) => r.points?.length > 1);
+      if (raw) this.routes = sanitizeRoutes(JSON.parse(raw));
     } catch (e) { console.warn('Could not load routes', e); }
+  }
+
+  /* ---------- undo ---------- */
+  // Snapshots of all routes (without stats) taken before each change; the last UNDO_LIMIT are kept.
+  private undoStack: { routes: Route[]; selectedId?: string }[] = [];
+  private snapshot() {
+    this.undoStack.push({ routes: this.routes.map(cloneRoute), selectedId: this.selectedId });
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+    this.renderButtons();
+  }
+  undo() {
+    if (this.mode === 'draw' && this.draft) { // while drawing: remove the last point
+      this.draft.points.pop();
+      this.refreshLine(this.draft); this.renderHandles(); this.renderButtons();
+      return;
+    }
+    const s = this.undoStack.pop();
+    if (!s) return;
+    this.dragIdx = -1;
+    this.viewer.scene.screenSpaceCameraController.enableInputs = true;
+    this.routes = s.routes;
+    for (const r of this.routes) this.statsVersion.set(r.id, (this.statsVersion.get(r.id) ?? 0) + 1); // drop in-flight stats
+    this.save();
+    const keep = this.routes.some((r) => r.id === s.selectedId) ? s.selectedId : undefined;
+    if (!keep && this.mode === 'edit') this.mode = 'idle';
+    if (keep) this.select(keep);
+    else { this.selectedId = undefined; this.profile.show(undefined); this.renderStats(undefined); this.renderAll(); }
   }
 
   /* ---------- rendering ---------- */
@@ -83,9 +117,33 @@ export class RouteManager {
     this.lines.clear();
     for (const r of this.routes) this.lines.set(r.id, this.lineEntity(r));
     if (this.draft) this.lines.set(this.draft.id, this.lineEntity(this.draft));
+    this.renderWaypoints();
     this.renderHandles();
     this.renderList();
     this.renderButtons();
+  }
+  /** GPX waypoints of all routes as labelled markers (labels only when close, to keep wide views readable). */
+  private wptEntities: Cesium.Entity[] = [];
+  private renderWaypoints() {
+    for (const e of this.wptEntities) this.viewer.entities.remove(e);
+    this.wptEntities = [];
+    for (const r of this.routes) {
+      for (const w of r.waypoints ?? []) {
+        this.wptEntities.push(this.viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(w.lon, w.lat),
+          point: {
+            pixelSize: 9, color: Cesium.Color.fromCssColorString('#ffb300'), outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+          },
+          label: {
+            text: w.name, font: '12px system-ui', fillColor: Cesium.Color.WHITE, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE, pixelOffset: new Cesium.Cartesian2(0, -16),
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 40000),
+          },
+        }));
+      }
+    }
   }
   private activeRoute(): Route | undefined {
     return this.draft ?? this.routes.find((r) => r.id === this.selectedId);
@@ -137,7 +195,11 @@ export class RouteManager {
       ren.textContent = '✎'; ren.title = 'Rename';
       ren.onclick = () => {
         const n = prompt('Route name', r.name);
-        if (n?.trim()) { r.name = n.trim(); this.save(); this.renderList(); }
+        if (n?.trim() && n.trim() !== r.name) {
+          this.snapshot();
+          r.name = n.trim(); this.save(); this.renderList();
+          if (r.id === this.selectedId) this.renderStats(r);
+        }
       };
       li.append(name, len, ren);
       ul.append(li);
@@ -151,6 +213,7 @@ export class RouteManager {
     $<HTMLButtonElement>('btnEdit').textContent = this.mode === 'edit' ? 'Done' : 'Edit';
     $<HTMLButtonElement>('btnDelete').disabled = !hasSel || this.mode === 'draw';
     $<HTMLButtonElement>('btnExport').disabled = this.routes.length === 0;
+    $<HTMLButtonElement>('btnUndo').disabled = this.mode === 'draw' ? !this.draft?.points.length : this.undoStack.length === 0;
     $('cesiumContainer').style.cursor = this.mode === 'draw' ? 'crosshair' : '';
   }
   private renderStats(r?: Route) {
@@ -177,10 +240,27 @@ export class RouteManager {
       const f = input.files?.[0];
       input.value = '';
       if (!f) return;
+      if (f.size > GPX_MAX_BYTES) { alert(`GPX file is too large (${Math.round(f.size / 1048576)} MB, limit ${GPX_MAX_BYTES / 1048576} MB).`); return; }
       try {
-        const parsed = parseGpx(await f.text());
-        if (!parsed.length) { alert('No tracks or routes found in this GPX file.'); return; }
-        for (const g of parsed) this.routes.push({ id: uid(), name: g.name, points: g.points });
+        const { routes: parsed, waypoints } = parseGpx(await f.text());
+        const target = this.routes.find((r) => r.id === this.selectedId);
+        if (!parsed.length && !(waypoints.length && target)) {
+          alert(waypoints.length
+            ? `This file has ${waypoints.length} waypoint(s) but no track. Select a route first to attach them to it.`
+            : 'No tracks, routes or waypoints found in this GPX file.');
+          return;
+        }
+        this.snapshot();
+        if (!parsed.length && target) { // waypoints only: attach to the selected route
+          target.waypoints = [...(target.waypoints ?? []), ...waypoints];
+          this.save();
+          this.renderAll();
+          return;
+        }
+        // Waypoints go with the first track of the file (GPX does not say which track they belong to).
+        parsed.forEach((g, i) => this.routes.push({
+          id: uid(), name: g.name, points: g.points, ...(i === 0 && waypoints.length ? { waypoints } : {}),
+        }));
         this.save();
         this.select(this.routes[this.routes.length - 1].id);
         this.zoomTo(this.routes[this.routes.length - 1]);
@@ -189,16 +269,22 @@ export class RouteManager {
     $('btnExport').onclick = () => {
       const sel = this.routes.find((r) => r.id === this.selectedId);
       const list = sel ? [sel] : this.routes;
-      const blob = new Blob([buildGpx(list.map((r) => ({ name: r.name, points: r.points })))], { type: 'application/gpx+xml' });
+      const blob = new Blob([buildGpx(list.map((r) => ({ name: r.name, points: r.points, waypoints: r.waypoints })))], { type: 'application/gpx+xml' });
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${(sel?.name ?? 'mountain_map_routes').replace(/[^\w.-]+/g, '_')}.gpx`;
       a.click();
-      URL.revokeObjectURL(a.href);
+      setTimeout(() => URL.revokeObjectURL(a.href), 10000); // revoking at once can cancel the download in some browsers
     };
+    $('btnUndo').onclick = () => this.undo();
     window.addEventListener('keydown', (e) => {
+      const typing = (e.target as HTMLElement | null)?.closest?.('input, textarea, select');
       if (e.key === 'Escape' && this.mode === 'draw') this.cancelDraw();
-      if (e.key === 'Enter' && this.mode === 'draw') this.finishDraw();
+      if (e.key === 'Enter' && this.mode === 'draw' && !typing) this.finishDraw();
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z' && !typing) {
+        e.preventDefault();
+        this.undo();
+      }
     });
   }
 
@@ -221,6 +307,7 @@ export class RouteManager {
     const d = this.draft;
     if (!d) return;
     if (d.points.length < 2) { this.cancelDraw(); return; }
+    this.snapshot();
     this.routes.push(d);
     this.draft = undefined;
     this.selectedId = d.id;
@@ -229,6 +316,7 @@ export class RouteManager {
     this.select(d.id);
   }
   private deleteRoute(id: string) {
+    this.snapshot();
     this.routes = this.routes.filter((r) => r.id !== id);
     this.statsVersion.delete(id);
     this.selectedId = undefined;
@@ -241,6 +329,7 @@ export class RouteManager {
   /** Add a route obtained elsewhere (e.g. the global search), select it and fly to it. */
   addRoute(name: string, points: Pt[]) {
     const r: Route = { id: uid(), name, points };
+    this.snapshot();
     this.routes.push(r);
     this.save();
     this.select(r.id);
@@ -277,30 +366,34 @@ export class RouteManager {
         this.draft.points.push(cartToPt(g));
         this.refreshLine(this.draft);
         this.renderHandles();
+        this.renderButtons();
         return;
       }
-      if (this.mode === 'edit') {
-        // Shift+click inserts a vertex into the nearest segment.
-        // (Cesium's click event does not expose modifiers, so Shift is tracked via keydown state.)
-        if (!this.shiftDown) return;
-        const r = this.routes.find((x) => x.id === this.selectedId);
-        const g = pickGround(this.viewer, e.position);
-        if (!r || !g) return;
-        const p = cartToPt(g);
-        let best = 0, bd = Infinity;
-        for (let i = 0; i < r.points.length - 1; i++) {
-          const d = haversine(r.points[i], p) + haversine(p, r.points[i + 1]) - haversine(r.points[i], r.points[i + 1]);
-          if (d < bd) { bd = d; best = i; }
-        }
-        r.points.splice(best + 1, 0, p);
-        this.afterEdit(r);
-        return;
-      }
+      if (this.mode === 'edit') return; // plain clicks do nothing while editing; Shift+click inserts (below)
       // idle: select route by clicking its line
       const picked = this.viewer.scene.pick(e.position);
       const id = picked?.id instanceof Cesium.Entity ? String(picked.id.id) : '';
       if (id.startsWith('route:')) this.select(id.slice(6));
     }, T.LEFT_CLICK);
+
+    // Shift+click inserts a vertex into the nearest segment. Cesium delivers clicks made with Shift held ONLY to
+    // actions registered with the SHIFT modifier, so this needs its own registration (found by browser test
+    // 2026-11-19: the old "track Shift with keydown" approach never fired).
+    this.handler.setInputAction((e: { position: Cesium.Cartesian2 }) => {
+      if (this.mode !== 'edit' || this.dragIdx >= 0) return;
+      const r = this.routes.find((x) => x.id === this.selectedId);
+      const g = pickGround(this.viewer, e.position);
+      if (!r || !g) return;
+      const p = cartToPt(g);
+      let best = 0, bd = Infinity;
+      for (let i = 0; i < r.points.length - 1; i++) {
+        const d = haversine(r.points[i], p) + haversine(p, r.points[i + 1]) - haversine(r.points[i], r.points[i + 1]);
+        if (d < bd) { bd = d; best = i; }
+      }
+      this.snapshot();
+      r.points.splice(best + 1, 0, p);
+      this.afterEdit(r);
+    }, T.LEFT_CLICK, Cesium.KeyboardEventModifier.SHIFT);
 
     this.handler.setInputAction(() => {
       if (this.mode === 'draw' && this.draft) {
@@ -315,6 +408,7 @@ export class RouteManager {
       const i = handleIdx(e.position);
       if (i < 0) return;
       this.dragIdx = i;
+      this.dragMoved = false;
       this.viewer.scene.screenSpaceCameraController.enableInputs = false;
     }, T.LEFT_DOWN);
 
@@ -323,6 +417,7 @@ export class RouteManager {
       const r = this.routes.find((x) => x.id === this.selectedId);
       const g = pickGround(this.viewer, e.endPosition);
       if (!r || !g) return;
+      if (!this.dragMoved) { this.snapshot(); this.dragMoved = true; } // one undo step per drag
       r.points[this.dragIdx] = cartToPt(g);
       this.handles[this.dragIdx].position = new Cesium.ConstantPositionProperty(Cesium.Cartesian3.fromDegrees(r.points[this.dragIdx].lon, r.points[this.dragIdx].lat));
       this.refreshLine(r);
@@ -333,24 +428,20 @@ export class RouteManager {
       this.dragIdx = -1;
       this.viewer.scene.screenSpaceCameraController.enableInputs = true;
       const r = this.routes.find((x) => x.id === this.selectedId);
-      if (r) this.afterEdit(r);
+      if (r && this.dragMoved) this.afterEdit(r);
     }, T.LEFT_UP);
 
     this.handler.setInputAction((e: { position: Cesium.Cartesian2 }) => {
       if (this.mode === 'edit') {
         const i = handleIdx(e.position);
         const r = this.routes.find((x) => x.id === this.selectedId);
-        if (i >= 0 && r && r.points.length > 2) { r.points.splice(i, 1); this.afterEdit(r); }
+        if (i >= 0 && r && r.points.length > 2) { this.snapshot(); r.points.splice(i, 1); this.afterEdit(r); }
       } else if (this.mode === 'draw' && this.draft && this.draft.points.length) {
-        this.draft.points.pop(); // right-click undoes the last point while drawing
-        this.refreshLine(this.draft); this.renderHandles();
+        this.undo(); // right-click undoes the last point while drawing
       }
     }, T.RIGHT_CLICK);
 
-    window.addEventListener('keydown', (e) => { if (e.key === 'Shift') this.shiftDown = true; });
-    window.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.shiftDown = false; });
   }
-  private shiftDown = false;
 
   private afterEdit(r: Route) {
     r.stats = undefined;
@@ -415,6 +506,8 @@ export class RouteManager {
     if (source === 'terrain') this.save(); // persist sampled vertex elevations for GPX export
   }
 }
+
+const UNDO_LIMIT = 30;
 
 function cartToPt(c: Cesium.Cartesian3): Pt {
   const g = Cesium.Cartographic.fromCartesian(c);
